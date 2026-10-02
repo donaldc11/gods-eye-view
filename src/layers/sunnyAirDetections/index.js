@@ -1,6 +1,7 @@
 import * as Cesium from 'cesium';
 import { createSunnyAirDetectionsSource } from './source.js';
 import { getClassColor, findNewestDetection } from './model.js';
+import { loadEvidenceVideo } from './video.js';
 import { registerPickOwner, unregisterPickOwner } from '../../data/pickRegistry.js';
 
 export { createSunnyAirDetectionsSource } from './source.js';
@@ -65,24 +66,25 @@ export function createSunnyAirDetectionsLayer({
     const card = ensureCardElement();
     if (!card) return;
     const colorInfo = getClassColor(record.class);
-    const confidencePct = Math.round(record.confidence * 100);
+    const confidencePct = record.confidence === null ? 'unknown' : `${Math.round(record.confidence * 100)}%`;
+    const escape = (value) => String(value ?? 'unknown').replace(/[&<>"']/g, (c) => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 
     let frameHtml = '';
     if (record.frame_url) {
-      frameHtml = `<div style="margin-top: 8px;"><img src="${record.frame_url}" alt="Frame" style="width: 100%; max-height: 140px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15);" /></div>`;
+      frameHtml = `<div style="margin-top: 8px;"><img src="${escape(record.frame_url)}" alt="Frame" style="width: 100%; max-height: 140px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15);" /></div>`;
     }
 
     card.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span style="font-weight: bold; text-transform: uppercase; color: ${colorInfo.css};">${record.class}</span>
+        <span style="font-weight: bold; text-transform: uppercase; color: ${colorInfo.css};">${escape(record.class)}</span>
         <button id="sunny-air-card-close" style="background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 14px; line-height: 1;">&times;</button>
       </div>
-      <div style="margin-bottom: 4px; color: #cbd5e1; font-size: 11px;">${record.summary}</div>
+      <div style="margin-bottom: 4px; color: #cbd5e1; font-size: 11px;">${escape(record.summary)}${record.approximate ? " (approximate site location)" : ""}</div>
       <div style="display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; margin-top: 6px;">
-        <span>Confidence: <strong style="color: #f1f5f9;">${confidencePct}%</strong></span>
-        <span>t_video: <strong style="color: #f1f5f9;">${record.t_video}s</strong></span>
+        <span>Confidence: <strong style="color: #f1f5f9;">${confidencePct}</strong></span>
+        <span>t_video: <strong style="color: #f1f5f9;">${record.t_video === null ? 'unknown' : `${record.t_video}s`}</strong></span>
       </div>
-      <div style="font-size: 10px; color: #64748b; margin-top: 4px;">TS: ${record.ts_utc}</div>
+      <div style="font-size: 10px; color: #64748b; margin-top: 4px;">TS: ${escape(record.ts_utc)}</div>
       ${frameHtml}
     `;
     card.style.display = 'block';
@@ -116,21 +118,19 @@ export function createSunnyAirDetectionsLayer({
     // 2. Show click card with summary, confidence, frame_url
     showCard(record);
 
-    // 3. Seek side-panel HTML video to properties.t_video & invoke callback
-    if (typeof record.t_video === 'number') {
-      const videoElements = typeof globalThis.document !== 'undefined'
-        ? document.querySelectorAll('video')
-        : [];
-      videoElements.forEach((video) => {
-        try {
-          video.currentTime = record.t_video;
-        } catch (_) {}
-      });
-      if (typeof onVideoSeek === 'function') {
-        try {
-          onVideoSeek(record.t_video, record);
-        } catch (_) {}
+    // Select one evidence player, load the correct clip, then seek after metadata.
+    if (typeof onVideoSeek === 'function') {
+      onVideoSeek(record.t_video, record);
+    } else if (record.video_url && typeof globalThis.document !== 'undefined') {
+      let video = document.getElementById('traffic-safety-evidence-video');
+      if (!video) {
+        video = document.createElement('video');
+        video.id = 'traffic-safety-evidence-video';
+        video.controls = true;
+        video.style.cssText = 'width:100%;margin-top:8px;max-height:180px';
+        ensureCardElement().appendChild(video);
       }
+      loadEvidenceVideo(video, record);
     }
   }
 
@@ -192,7 +192,7 @@ export function createSunnyAirDetectionsLayer({
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
           },
           label: {
-            text: `${rec.class.toUpperCase()}\n${rec.ts_utc}`,
+            text: `${rec.class.toUpperCase()}\n${rec.ts_utc || 'capture time unknown'}${rec.approximate ? '\napproximate site' : ''}`,
             font: '11px monospace',
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
             fillColor: Cesium.Color.WHITE,
@@ -212,6 +212,11 @@ export function createSunnyAirDetectionsLayer({
     } catch (err) {
       if (request.signal.aborted || _request !== request || !_enabled) return;
       _lastError = err?.message || 'Failed to fetch detections';
+      _records = [];
+      _count = 0;
+      _newestId = null;
+      _dataSource?.entities.removeAll();
+      hideCard();
     } finally {
       if (_request === request) _request = null;
     }
@@ -219,9 +224,9 @@ export function createSunnyAirDetectionsLayer({
 
   const layer = {
     id: LAYER_ID,
-    name: 'Sunny Air Detections',
+    name: 'Traffic Safety Watch',
     icon: '🚁',
-    source: 'Sunny Air / Detections',
+    source: 'VSS video evidence',
     updateInterval: pollIntervalMs,
 
     init(viewer) {
@@ -241,7 +246,7 @@ export function createSunnyAirDetectionsLayer({
 
         const time = Date.now() / 1000;
         const pulse = 0.5 + 0.5 * Math.sin(time * 6); // Oscillation between 0 and 1
-        const colorInfo = getClassColor(entity.properties?.class?.getValue?.() || 'smoke');
+        const colorInfo = getClassColor(entity.properties?.class?.getValue?.() || 'unknown');
         entity.point.color = new Cesium.Color(
           colorInfo.r,
           colorInfo.g,

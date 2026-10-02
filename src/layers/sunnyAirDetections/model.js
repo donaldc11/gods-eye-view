@@ -14,43 +14,43 @@ export function getClassColor(className) {
   }
 }
 
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function normalizeDetectionFeature(feature) {
   if (!feature || feature.type !== 'Feature') return null;
   const props = feature.properties || {};
-  const geom = feature.geometry;
-
-  let lon = Number(props.lon);
-  let lat = Number(props.lat);
-  if ((!Number.isFinite(lon) || !Number.isFinite(lat)) && geom?.type === 'Point' && Array.isArray(geom.coordinates)) {
-    lon = Number(geom.coordinates[0]);
-    lat = Number(geom.coordinates[1]);
-  }
-  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
-
-  const id = String(props.id || `det-${Math.random().toString(36).substring(2, 9)}`);
-  const cls = String(props.class || 'smoke').toLowerCase().trim();
-  const confidence = Number.isFinite(Number(props.confidence)) ? Number(props.confidence) : 0.5;
-  const tVideo = Number.isFinite(Number(props.t_video)) ? Number(props.t_video) : 0;
-  const tsUtc = String(props.ts_utc || new Date().toISOString());
-  const altM = Number.isFinite(Number(props.alt_m)) ? Number(props.alt_m) : 0;
-  const headingDeg = Number.isFinite(Number(props.heading_deg)) ? Number(props.heading_deg) : 0;
-  const source = String(props.source || 'Sunny Air Detections');
-  const frameUrl = props.frame_url ? String(props.frame_url) : null;
-  const summary = String(props.summary || `${cls} detected`);
-
+  const coords = feature.geometry?.type === 'Point' ? feature.geometry.coordinates : [];
+  const lon = optionalNumber(props.lon) ?? optionalNumber(coords?.[0]);
+  const lat = optionalNumber(props.lat) ?? optionalNumber(coords?.[1]);
+  if (lon === null || lat === null || Math.abs(lon) > 180 || Math.abs(lat) > 90) return null;
+  const tVideo = optionalNumber(props.t_video);
+  // Derived identity is repeatable across snapshots; never invent random events.
+  const identity = [props.source, props.original_video, props.camera_id, tVideo, props.class, lon, lat];
+  const id = String(props.id || `det:${JSON.stringify(identity)}`);
+  const confidence = optionalNumber(props.confidence);
+  const rawTimestamp = props.ts_utc;
+  const tsUtc = rawTimestamp && Number.isFinite(Date.parse(rawTimestamp)) ? String(rawTimestamp) : null;
   return {
+    ...props,
     id,
-    class: cls,
-    confidence,
-    t_video: tVideo,
+    class: String(props.class || 'unknown').toLowerCase().trim(),
+    confidence: confidence !== null && confidence >= 0 && confidence <= 1 ? confidence : null,
+    t_video: tVideo !== null && tVideo >= 0 ? tVideo : null,
     ts_utc: tsUtc,
-    lat,
-    lon,
-    alt_m: altM,
-    heading_deg: headingDeg,
-    source,
-    frame_url: frameUrl,
-    summary,
+    lat, lon,
+    alt_m: optionalNumber(props.alt_m) ?? 0,
+    heading_deg: optionalNumber(props.heading_deg),
+    source: String(props.source || 'Video archive'),
+    frame_url: props.frame_url ? String(props.frame_url) : null,
+    video_url: props.video_url ? String(props.video_url) : null,
+    camera_id: props.camera_id ?? null,
+    location: props.location ?? null,
+    approximate: props.approximate === true,
+    summary: String(props.summary || 'Video evidence'),
   };
 }
 
@@ -59,8 +59,10 @@ export function findNewestDetection(detections) {
   let newest = null;
   let maxTime = -Infinity;
   for (const det of detections) {
+    if (!det.ts_utc) continue;
     const time = new Date(det.ts_utc).getTime();
-    const validTime = Number.isFinite(time) ? time : 0;
+    if (!Number.isFinite(time)) continue;
+    const validTime = time;
     if (validTime > maxTime) {
       maxTime = validTime;
       newest = det;

@@ -1,6 +1,9 @@
 import { normalizeDetectionFeature } from './model.js';
 
-const DEFAULT_URL = '/detections.geojson';
+export function detectionsUrl(base = import.meta.env?.BASE_URL || '/') {
+  return `${base.endsWith('/') ? base : `${base}/`}detections.geojson`;
+}
+const DEFAULT_URL = detectionsUrl();
 
 export function createSunnyAirDetectionsSource({
   url = DEFAULT_URL,
