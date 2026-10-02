@@ -1,0 +1,88 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-118.4451, 34.6782, 1120.0]
+      },
+      "properties": {
+        "id": "det-lh-001",
+        "class": "flame",
+        "confidence": 0.94,
+        "t_video": 42.5,
+        "ts_utc": "2026-09-23T14:35:10Z",
+        "lat": 34.6782,
+        "lon": -118.4451,
+        "alt_m": 1120.0,
+        "heading_deg": 185.0,
+        "source": "Sunny Air Recon AI-1",
+        "frame_url": "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb",
+        "summary": "Active flame front detected near Pine Canyon Rd crest with rapid spread potential."
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-118.4395, 34.6821, 1080.0]
+      },
+      "properties": {
+        "id": "det-lh-002",
+        "class": "smoke",
+        "confidence": 0.88,
+        "t_video": 18.0,
+        "ts_utc": "2026-09-23T14:32:00Z",
+        "lat": 34.6821,
+        "lon": -118.4395,
+        "alt_m": 1080.0,
+        "heading_deg": 45.0,
+        "source": "Sunny Air Recon AI-1",
+        "frame_url": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23",
+        "summary": "Dense white smoke plume rising northeast of Elizabeth Lake Road."
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-118.4480, 34.6710, 990.0]
+      },
+      "properties": {
+        "id": "det-lh-003",
+        "class": "vehicle",
+        "confidence": 0.91,
+        "t_video": 85.2,
+        "ts_utc": "2026-09-23T14:28:45Z",
+        "lat": 34.6710,
+        "lon": -118.4480,
+        "alt_m": 990.0,
+        "heading_deg": 270.0,
+        "source": "Sunny Air Recon AI-1",
+        "frame_url": "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf",
+        "summary": "First responder emergency vehicle stationary at staging area."
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-118.4412, 34.6695, 960.0]
+      },
+      "properties": {
+        "id": "det-lh-004",
+        "class": "person",
+        "confidence": 0.82,
+        "t_video": 112.0,
+        "ts_utc": "2026-09-23T14:25:30Z",
+        "lat": 34.6695,
+        "lon": -118.4412,
+        "alt_m": 960.0,
+        "source": "Sunny Air Recon AI-1",
+        "frame_url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d",
+        "summary": "Field personnel observed conducting perimeter assessment."
+      }
+    }
+  ]
+}
