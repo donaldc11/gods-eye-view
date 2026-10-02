@@ -118,17 +118,33 @@ export function createSunnyAirDetectionsLayer({
     // 2. Show click card with summary, confidence, frame_url
     showCard(record);
 
-    // Select one evidence player, load the correct clip, then seek after metadata.
-    if (typeof onVideoSeek === 'function') {
+    // Seek side-panel HTML video to properties.t_video & invoke callback
+    if (typeof record.t_video === 'number') {
+      if (typeof globalThis.document !== 'undefined') {
+        const videoElements = document.querySelectorAll('video');
+        videoElements.forEach((video) => {
+          try {
+            video.currentTime = record.t_video;
+          } catch (_) {}
+        });
+      }
+      if (typeof onVideoSeek === 'function') {
+        try {
+          onVideoSeek(record.t_video, record);
+        } catch (_) {}
+      }
+    } else if (typeof onVideoSeek === 'function') {
       onVideoSeek(record.t_video, record);
-    } else if (record.video_url && typeof globalThis.document !== 'undefined') {
-      let video = document.getElementById('traffic-safety-evidence-video');
+    }
+
+    if (record.video_url && typeof globalThis.document !== 'undefined') {
+      let video = document.getElementById('sunny-air-evidence-video');
       if (!video) {
         video = document.createElement('video');
-        video.id = 'traffic-safety-evidence-video';
+        video.id = 'sunny-air-evidence-video';
         video.controls = true;
         video.style.cssText = 'width:100%;margin-top:8px;max-height:180px';
-        ensureCardElement().appendChild(video);
+        ensureCardElement()?.appendChild(video);
       }
       loadEvidenceVideo(video, record);
     }
@@ -224,9 +240,9 @@ export function createSunnyAirDetectionsLayer({
 
   const layer = {
     id: LAYER_ID,
-    name: 'Traffic Safety Watch',
+    name: 'Sunny Air Detections',
     icon: '🚁',
-    source: 'VSS video evidence',
+    source: 'Sunny Air / Detections',
     updateInterval: pollIntervalMs,
 
     init(viewer) {

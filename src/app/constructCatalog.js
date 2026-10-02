@@ -194,7 +194,7 @@ export function createApplicationCatalog({
           feed: sources.firms,
         }),
         createSunnyAirDetections({
-          url: '/detections.geojson',
+          url: `${import.meta.env?.BASE_URL || '/'}detections.geojson`,
         }),
       ],
       metadata,
