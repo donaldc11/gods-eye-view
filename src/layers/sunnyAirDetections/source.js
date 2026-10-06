@@ -1,7 +1,8 @@
 import { normalizeDetectionFeature } from './model.js';
 
 export function detectionsUrl(base = import.meta.env?.BASE_URL || '/') {
-  return `${base.endsWith('/') ? base : `${base}/`}detections.geojson`;
+  const root = base || '/';
+  return `${root.endsWith('/') ? root : `${root}/`}detections.geojson`;
 }
 const DEFAULT_URL = detectionsUrl();
 
@@ -18,7 +19,11 @@ export function createSunnyAirDetectionsSource({
       }
       const data = await response.json();
       signal?.throwIfAborted();
-      if (!data || data.type !== 'FeatureCollection' || !Array.isArray(data.features)) {
+      if (
+        !data ||
+        data.type !== 'FeatureCollection' ||
+        !Array.isArray(data.features)
+      ) {
         throw new Error('Invalid GeoJSON FeatureCollection response');
       }
       const records = [];

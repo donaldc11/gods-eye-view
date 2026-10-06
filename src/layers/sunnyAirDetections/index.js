@@ -2,9 +2,12 @@ import * as Cesium from 'cesium';
 import { createSunnyAirDetectionsSource } from './source.js';
 import { getClassColor, findNewestDetection } from './model.js';
 import { loadEvidenceVideo } from './video.js';
-import { registerPickOwner, unregisterPickOwner } from '../../data/pickRegistry.js';
+import {
+  registerPickOwner,
+  unregisterPickOwner,
+} from '../../data/pickRegistry.js';
 
-export { createSunnyAirDetectionsSource } from './source.js';
+export { createSunnyAirDetectionsSource, detectionsUrl } from './source.js';
 export * from './model.js';
 
 export const LAYER_ID = 'sunny-air-detections';
@@ -17,7 +20,6 @@ export function createSunnyAirDetectionsLayer({
   let _viewer = null;
   let _dataSource = null;
   let _enabled = false;
-  let _intervalId = null;
   let _request = null;
   let _count = 0;
   let _lastUpdate = null;
@@ -57,17 +59,36 @@ export function createSunnyAirDetectionsLayer({
   }
 
   function hideCard() {
-    if (_cardElement) {
-      _cardElement.style.display = 'none';
+    if (!_cardElement) return;
+    const video = _cardElement.querySelector('video');
+    if (video) {
+      try {
+        video.pause();
+      } catch (_) {}
     }
+    _cardElement.style.display = 'none';
   }
 
   function showCard(record) {
     const card = ensureCardElement();
     if (!card) return;
     const colorInfo = getClassColor(record.class);
-    const confidencePct = record.confidence === null ? 'unknown' : `${Math.round(record.confidence * 100)}%`;
-    const escape = (value) => String(value ?? 'unknown').replace(/[&<>"']/g, (c) => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+    const confidencePct =
+      record.confidence === null
+        ? 'unknown'
+        : `${Math.round(record.confidence * 100)}%`;
+    const escape = (value) =>
+      String(value ?? 'unknown').replace(
+        /[&<>"']/g,
+        (c) =>
+          ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+          })[c],
+      );
 
     let frameHtml = '';
     if (record.frame_url) {
@@ -79,7 +100,7 @@ export function createSunnyAirDetectionsLayer({
         <span style="font-weight: bold; text-transform: uppercase; color: ${colorInfo.css};">${escape(record.class)}</span>
         <button id="sunny-air-card-close" style="background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 14px; line-height: 1;">&times;</button>
       </div>
-      <div style="margin-bottom: 4px; color: #cbd5e1; font-size: 11px;">${escape(record.summary)}${record.approximate ? " (approximate site location)" : ""}</div>
+      <div style="margin-bottom: 4px; color: #cbd5e1; font-size: 11px;">${escape(record.summary)}${record.approximate ? ' (approximate site location)' : ''}</div>
       <div style="display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; margin-top: 6px;">
         <span>Confidence: <strong style="color: #f1f5f9;">${confidencePct}</strong></span>
         <span>t_video: <strong style="color: #f1f5f9;">${record.t_video === null ? 'unknown' : `${record.t_video}s`}</strong></span>
@@ -98,43 +119,48 @@ export function createSunnyAirDetectionsLayer({
     }
   }
 
+  function flyToRecord(record) {
+    if (!_viewer) return;
+    const entity = _dataSource?.entities?.getById?.(`sunny-air:${record.id}`);
+    const offset = new Cesium.HeadingPitchRange(
+      0,
+      Cesium.Math.toRadians(-50),
+      4000,
+    );
+    if (entity && typeof _viewer.flyTo === 'function') {
+      Promise.resolve(_viewer.flyTo(entity, { duration: 1.5, offset })).catch(
+        () => {},
+      );
+      return;
+    }
+    if (!_viewer.camera?.flyTo) return;
+    if (!Number.isFinite(record.lon) || !Number.isFinite(record.lat)) return;
+    _viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(
+        record.lon,
+        record.lat,
+        Math.max(Number(record.alt_m) || 0, 0) + 4000,
+      ),
+      orientation: {
+        heading: 0,
+        pitch: Cesium.Math.toRadians(-50),
+        roll: 0,
+      },
+      duration: 1.5,
+    });
+  }
+
   function handleEntityClick(record) {
     if (!record) return;
     _selectedRecord = record;
 
-    // 1. Fly camera to entity
-    if (_viewer && _viewer.camera) {
-      const position = Cesium.Cartesian3.fromDegrees(
-        record.lon,
-        record.lat,
-        Math.max(record.alt_m || 0, 0) + 200,
-      );
-      _viewer.camera.flyTo({
-        destination: position,
-        duration: 1.5,
-      });
-    }
-
-    // 2. Show click card with summary, confidence, frame_url
+    flyToRecord(record);
     showCard(record);
 
-    // Seek side-panel HTML video to properties.t_video & invoke callback
-    if (typeof record.t_video === 'number') {
-      if (typeof globalThis.document !== 'undefined') {
-        const videoElements = document.querySelectorAll('video');
-        videoElements.forEach((video) => {
-          try {
-            video.currentTime = record.t_video;
-          } catch (_) {}
-        });
-      }
-      if (typeof onVideoSeek === 'function') {
-        try {
-          onVideoSeek(record.t_video, record);
-        } catch (_) {}
-      }
-    } else if (typeof onVideoSeek === 'function') {
-      onVideoSeek(record.t_video, record);
+    if (typeof onVideoSeek === 'function') {
+      try {
+        onVideoSeek(record.t_video, record);
+      } catch (_) {}
     }
 
     if (record.video_url && typeof globalThis.document !== 'undefined') {
@@ -170,15 +196,98 @@ export function createSunnyAirDetectionsLayer({
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
   }
 
-  async function fetchAndUpdate() {
-    if (!_enabled || !_dataSource) return;
+  function markerGraphics(rec, isNewest) {
+    const colorInfo = getClassColor(rec.class);
+    const cesiumColor = new Cesium.Color(
+      colorInfo.r,
+      colorInfo.g,
+      colorInfo.b,
+      1.0,
+    );
+    const label = `${String(rec.class || 'unknown').toUpperCase()}\n${rec.ts_utc || 'capture time unknown'}${rec.approximate ? '\napproximate site' : ''}`;
+    // Clamped points sit in the terrain depth buffer and never draw unless
+    // depth testing is disabled. Same contract as the other ground layers.
+    return {
+      point: {
+        pixelSize: isNewest ? 14 : 10,
+        color: cesiumColor,
+        outlineColor: Cesium.Color.WHITE,
+        outlineWidth: 2,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: {
+        text: label,
+        font: '11px monospace',
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        showBackground: true,
+        backgroundColor: new Cesium.Color(0.1, 0.1, 0.1, 0.7),
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -12),
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    };
+  }
+
+  function syncEntities(records) {
+    const seen = new Set();
+    for (const rec of records) {
+      const id = `sunny-air:${rec.id}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const position = Cesium.Cartesian3.fromDegrees(
+        rec.lon,
+        rec.lat,
+        rec.alt_m || 0,
+      );
+      const isNewest = String(rec.id) === String(_newestId);
+      const graphics = markerGraphics(rec, isNewest);
+      let entity = _dataSource.entities.getById(id);
+      if (!entity) {
+        entity = _dataSource.entities.add(
+          new Cesium.Entity({
+            id,
+            position,
+            ...graphics,
+            properties: { ...rec },
+          }),
+        );
+      } else {
+        entity.position = position;
+        entity.point = graphics.point;
+        entity.label = graphics.label;
+        entity.properties = { ...rec };
+      }
+    }
+    const stale = _dataSource.entities.values.filter(
+      (entity) => !seen.has(entity.id),
+    );
+    for (const entity of stale) _dataSource.entities.remove(entity);
+  }
+
+  async function fetchAndUpdate(_viewerArg, options = {}) {
+    if (!_enabled || !_dataSource) return false;
+    if (options?.signal?.aborted) return false;
     _request?.abort();
     const request = new AbortController();
     _request = request;
+    const onExternalAbort = () => request.abort();
+    options?.signal?.addEventListener?.('abort', onExternalAbort, {
+      once: true,
+    });
 
     try {
-      const records = await source.getSnapshot({ signal: request.signal });
-      if (request.signal.aborted || _request !== request || !_enabled) return;
+      const fetched = await source.getSnapshot({ signal: request.signal });
+      if (request.signal.aborted || _request !== request || !_enabled)
+        return false;
+
+      const byId = new Map();
+      for (const rec of fetched) byId.set(String(rec.id), rec);
+      const records = [...byId.values()];
 
       _records = records;
       _count = records.length;
@@ -187,53 +296,23 @@ export function createSunnyAirDetectionsLayer({
 
       const newest = findNewestDetection(records);
       _newestId = newest ? newest.id : null;
+      syncEntities(records);
 
-      _dataSource.entities.removeAll();
-
-      for (const rec of records) {
-        const colorInfo = getClassColor(rec.class);
-        const cesiumColor = new Cesium.Color(colorInfo.r, colorInfo.g, colorInfo.b, 1.0);
-        const position = Cesium.Cartesian3.fromDegrees(rec.lon, rec.lat, rec.alt_m || 0);
-
-        const isNewest = String(rec.id) === String(_newestId);
-
-        const entityOptions = {
-          id: `sunny-air:${rec.id}`,
-          position,
-          point: {
-            pixelSize: isNewest ? 14 : 10,
-            color: cesiumColor,
-            outlineColor: Cesium.Color.WHITE,
-            outlineWidth: 2,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          },
-          label: {
-            text: `${rec.class.toUpperCase()}\n${rec.ts_utc || 'capture time unknown'}${rec.approximate ? '\napproximate site' : ''}`,
-            font: '11px monospace',
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            fillColor: Cesium.Color.WHITE,
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 2,
-            showBackground: true,
-            backgroundColor: new Cesium.Color(0.1, 0.1, 0.1, 0.7),
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            pixelOffset: new Cesium.Cartesian2(0, -12),
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          },
-          properties: { ...rec },
-        };
-
-        _dataSource.entities.add(new Cesium.Entity(entityOptions));
+      if (
+        _selectedRecord &&
+        !records.some((rec) => String(rec.id) === String(_selectedRecord.id))
+      ) {
+        _selectedRecord = null;
+        hideCard();
       }
+      return true;
     } catch (err) {
-      if (request.signal.aborted || _request !== request || !_enabled) return;
+      if (request.signal.aborted || _request !== request || !_enabled)
+        return false;
       _lastError = err?.message || 'Failed to fetch detections';
-      _records = [];
-      _count = 0;
-      _newestId = null;
-      _dataSource?.entities.removeAll();
-      hideCard();
+      return false;
     } finally {
+      options?.signal?.removeEventListener?.('abort', onExternalAbort);
       if (_request === request) _request = null;
     }
   }
@@ -246,7 +325,8 @@ export function createSunnyAirDetectionsLayer({
     updateInterval: pollIntervalMs,
 
     init(viewer) {
-      if (_viewer) throw new Error('Sunny Air Detections layer is already initialized');
+      if (_viewer)
+        throw new Error('Sunny Air Detections layer is already initialized');
       _viewer = viewer;
       _dataSource = new Cesium.CustomDataSource('sunny-air-detections');
       _dataSource.show = false;
@@ -262,7 +342,9 @@ export function createSunnyAirDetectionsLayer({
 
         const time = Date.now() / 1000;
         const pulse = 0.5 + 0.5 * Math.sin(time * 6); // Oscillation between 0 and 1
-        const colorInfo = getClassColor(entity.properties?.class?.getValue?.() || 'unknown');
+        const colorInfo = getClassColor(
+          entity.properties?.class?.getValue?.() || 'unknown',
+        );
         entity.point.color = new Cesium.Color(
           colorInfo.r,
           colorInfo.g,
@@ -276,19 +358,17 @@ export function createSunnyAirDetectionsLayer({
     enable() {
       _enabled = true;
       if (_dataSource) _dataSource.show = true;
-      registerPickOwner(LAYER_ID, (id) => typeof id === 'string' && id.startsWith('sunny-air:'));
-
-      fetchAndUpdate();
-      if (_intervalId) clearInterval(_intervalId);
-      _intervalId = setInterval(fetchAndUpdate, pollIntervalMs);
+      registerPickOwner(
+        LAYER_ID,
+        (id) => typeof id === 'string' && id.startsWith('sunny-air:'),
+      );
+      // LayerLifecycle arms updateInterval. A private timer double-fetches and
+      // aborts the in-flight load, so the markers flicker and the network log
+      // fills with cancelled detections.geojson requests.
     },
 
     disable() {
       _enabled = false;
-      if (_intervalId) {
-        clearInterval(_intervalId);
-        _intervalId = null;
-      }
       _request?.abort();
       _request = null;
       if (_dataSource) _dataSource.show = false;
