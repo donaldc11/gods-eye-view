@@ -2,7 +2,15 @@ import * as Cesium from 'cesium';
 import { createSunnyAirDetectionsSource } from './source.js';
 import { getClassColor, findNewestDetection } from './model.js';
 import { loadEvidenceVideo } from './video.js';
-import { registerPickOwner, unregisterPickOwner } from '../../data/pickRegistry.js';
+import {
+  registerPickOwner,
+  unregisterPickOwner,
+} from '../../data/pickRegistry.js';
+import {
+  governorRequestRender,
+  holdContinuousRender,
+  releaseContinuousRender,
+} from '../../renderGovernor.js';
 
 export { createSunnyAirDetectionsSource } from './source.js';
 export * from './model.js';
@@ -13,11 +21,11 @@ export function createSunnyAirDetectionsLayer({
   source = createSunnyAirDetectionsSource(),
   pollIntervalMs = 2000,
   onVideoSeek = null,
+  overlayHost = null,
 } = {}) {
   let _viewer = null;
   let _dataSource = null;
   let _enabled = false;
-  let _intervalId = null;
   let _request = null;
   let _count = 0;
   let _lastUpdate = null;
@@ -66,8 +74,22 @@ export function createSunnyAirDetectionsLayer({
     const card = ensureCardElement();
     if (!card) return;
     const colorInfo = getClassColor(record.class);
-    const confidencePct = record.confidence === null ? 'unknown' : `${Math.round(record.confidence * 100)}%`;
-    const escape = (value) => String(value ?? 'unknown').replace(/[&<>"']/g, (c) => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+    const confidencePct =
+      record.confidence === null
+        ? 'unknown'
+        : `${Math.round(record.confidence * 100)}%`;
+    const escape = (value) =>
+      String(value ?? 'unknown').replace(
+        /[&<>"']/g,
+        (c) =>
+          ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+          })[c],
+      );
 
     let frameHtml = '';
     if (record.frame_url) {
@@ -79,7 +101,7 @@ export function createSunnyAirDetectionsLayer({
         <span style="font-weight: bold; text-transform: uppercase; color: ${colorInfo.css};">${escape(record.class)}</span>
         <button id="sunny-air-card-close" style="background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 14px; line-height: 1;">&times;</button>
       </div>
-      <div style="margin-bottom: 4px; color: #cbd5e1; font-size: 11px;">${escape(record.summary)}${record.approximate ? " (approximate site location)" : ""}</div>
+      <div style="margin-bottom: 4px; color: #cbd5e1; font-size: 11px;">${escape(record.summary)}${record.approximate ? ' (approximate site location)' : ''}</div>
       <div style="display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; margin-top: 6px;">
         <span>Confidence: <strong style="color: #f1f5f9;">${confidencePct}</strong></span>
         <span>t_video: <strong style="color: #f1f5f9;">${record.t_video === null ? 'unknown' : `${record.t_video}s`}</strong></span>
@@ -98,43 +120,48 @@ export function createSunnyAirDetectionsLayer({
     }
   }
 
+  function frameRecord(record) {
+    const camera = _viewer?.camera;
+    if (
+      !camera ||
+      !Number.isFinite(record?.lon) ||
+      !Number.isFinite(record?.lat)
+    )
+      return;
+    const target = Cesium.Cartesian3.fromDegrees(
+      record.lon,
+      record.lat,
+      Math.max(Number(record.alt_m) || 0, 0),
+    );
+    const offset = new Cesium.HeadingPitchRange(
+      Number.isFinite(camera.heading) ? camera.heading : 0,
+      Cesium.Math.toRadians(-40),
+      1800,
+    );
+    if (typeof camera.flyToBoundingSphere === 'function') {
+      camera.flyToBoundingSphere(new Cesium.BoundingSphere(target, 40), {
+        duration: 1.5,
+        offset,
+      });
+      return;
+    }
+    camera.flyTo?.({
+      destination: target,
+      orientation: { heading: offset.heading, pitch: offset.pitch, roll: 0 },
+      duration: 1.5,
+    });
+  }
+
   function handleEntityClick(record) {
     if (!record) return;
     _selectedRecord = record;
-
-    // 1. Fly camera to entity
-    if (_viewer && _viewer.camera) {
-      const position = Cesium.Cartesian3.fromDegrees(
-        record.lon,
-        record.lat,
-        Math.max(record.alt_m || 0, 0) + 200,
-      );
-      _viewer.camera.flyTo({
-        destination: position,
-        duration: 1.5,
-      });
-    }
-
-    // 2. Show click card with summary, confidence, frame_url
+    frameRecord(record);
     showCard(record);
 
-    // Seek side-panel HTML video to properties.t_video & invoke callback
-    if (typeof record.t_video === 'number') {
-      if (typeof globalThis.document !== 'undefined') {
-        const videoElements = document.querySelectorAll('video');
-        videoElements.forEach((video) => {
-          try {
-            video.currentTime = record.t_video;
-          } catch (_) {}
-        });
-      }
-      if (typeof onVideoSeek === 'function') {
-        try {
-          onVideoSeek(record.t_video, record);
-        } catch (_) {}
-      }
-    } else if (typeof onVideoSeek === 'function') {
-      onVideoSeek(record.t_video, record);
+    if (typeof onVideoSeek === 'function') {
+      try {
+        onVideoSeek(record.t_video, record);
+      } catch (_) {}
     }
 
     if (record.video_url && typeof globalThis.document !== 'undefined') {
@@ -170,6 +197,25 @@ export function createSunnyAirDetectionsLayer({
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
   }
 
+  function publishOverlay(entries) {
+    if (typeof overlayHost?.setEntries !== 'function') return;
+    try {
+      overlayHost.setEntries(LAYER_ID, entries, {
+        cohortLimit: 64,
+        collisionCapacity: 32,
+        moving: false,
+        visible: _enabled,
+      });
+    } catch (error) {
+      console.warn('[Sunny Air] overlay update failed:', error);
+    }
+  }
+
+  function syncPulseHold() {
+    if (_enabled && _newestId) holdContinuousRender(LAYER_ID);
+    else releaseContinuousRender(LAYER_ID);
+  }
+
   async function fetchAndUpdate() {
     if (!_enabled || !_dataSource) return;
     _request?.abort();
@@ -181,7 +227,6 @@ export function createSunnyAirDetectionsLayer({
       if (request.signal.aborted || _request !== request || !_enabled) return;
 
       _records = records;
-      _count = records.length;
       _lastUpdate = Date.now();
       _lastError = null;
 
@@ -189,50 +234,83 @@ export function createSunnyAirDetectionsLayer({
       _newestId = newest ? newest.id : null;
 
       _dataSource.entities.removeAll();
+      const overlayEntries = [];
+      const seenIds = new Set();
 
       for (const rec of records) {
+        const entityId = String(rec.id);
+        if (seenIds.has(entityId)) continue;
+        seenIds.add(entityId);
         const colorInfo = getClassColor(rec.class);
-        const cesiumColor = new Cesium.Color(colorInfo.r, colorInfo.g, colorInfo.b, 1.0);
-        const position = Cesium.Cartesian3.fromDegrees(rec.lon, rec.lat, rec.alt_m || 0);
+        const cesiumColor = new Cesium.Color(
+          colorInfo.r,
+          colorInfo.g,
+          colorInfo.b,
+          1.0,
+        );
+        const position = Cesium.Cartesian3.fromDegrees(
+          rec.lon,
+          rec.lat,
+          rec.alt_m || 0,
+        );
+        const isNewest = entityId === String(_newestId);
+        const title = String(rec.class || 'unknown').toUpperCase();
 
-        const isNewest = String(rec.id) === String(_newestId);
-
-        const entityOptions = {
-          id: `sunny-air:${rec.id}`,
+        _dataSource.entities.add(
+          new Cesium.Entity({
+            id: `sunny-air:${entityId}`,
+            position,
+            point: {
+              pixelSize: isNewest ? 14 : 10,
+              color: cesiumColor,
+              outlineColor: Cesium.Color.WHITE,
+              outlineWidth: 2,
+              // Clamped points wait on terrain classification and never become
+              // pickable on the keyless ellipsoid, so the click card cannot open.
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+            properties: { ...rec },
+          }),
+        );
+        overlayEntries.push({
+          id: entityId,
           position,
-          point: {
-            pixelSize: isNewest ? 14 : 10,
-            color: cesiumColor,
-            outlineColor: Cesium.Color.WHITE,
-            outlineWidth: 2,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          },
-          label: {
-            text: `${rec.class.toUpperCase()}\n${rec.ts_utc || 'capture time unknown'}${rec.approximate ? '\napproximate site' : ''}`,
-            font: '11px monospace',
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            fillColor: Cesium.Color.WHITE,
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 2,
-            showBackground: true,
-            backgroundColor: new Cesium.Color(0.1, 0.1, 0.1, 0.7),
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            pixelOffset: new Cesium.Cartesian2(0, -12),
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          },
-          properties: { ...rec },
-        };
-
-        _dataSource.entities.add(new Cesium.Entity(entityOptions));
+          variant: 'label',
+          title: rec.approximate ? `${title} · approximate site` : title,
+          details: [rec.ts_utc || 'capture time unknown'],
+          accent: colorInfo.css,
+          priority: isNewest ? 1000 : 100,
+          collisionGroup: 'ambient-label',
+          paintLane: 'ambient-label',
+          interactive: false,
+          edgeFade: 'keyhole',
+          horizonCull: true,
+          terrainOcclusion: false,
+          gapPx: 15,
+          verticalOnly: true,
+          placement: 'above',
+        });
       }
+      _count = seenIds.size;
+      publishOverlay(overlayEntries);
+      if (_selectedRecord && !seenIds.has(String(_selectedRecord.id))) {
+        _selectedRecord = null;
+        hideCard();
+      }
+      syncPulseHold();
+      governorRequestRender('sunny-air-detections');
     } catch (err) {
       if (request.signal.aborted || _request !== request || !_enabled) return;
       _lastError = err?.message || 'Failed to fetch detections';
       _records = [];
       _count = 0;
       _newestId = null;
+      _selectedRecord = null;
       _dataSource?.entities.removeAll();
+      publishOverlay([]);
+      syncPulseHold();
       hideCard();
+      governorRequestRender('sunny-air-detections');
     } finally {
       if (_request === request) _request = null;
     }
@@ -246,7 +324,8 @@ export function createSunnyAirDetectionsLayer({
     updateInterval: pollIntervalMs,
 
     init(viewer) {
-      if (_viewer) throw new Error('Sunny Air Detections layer is already initialized');
+      if (_viewer)
+        throw new Error('Sunny Air Detections layer is already initialized');
       _viewer = viewer;
       _dataSource = new Cesium.CustomDataSource('sunny-air-detections');
       _dataSource.show = false;
@@ -262,7 +341,9 @@ export function createSunnyAirDetectionsLayer({
 
         const time = Date.now() / 1000;
         const pulse = 0.5 + 0.5 * Math.sin(time * 6); // Oscillation between 0 and 1
-        const colorInfo = getClassColor(entity.properties?.class?.getValue?.() || 'unknown');
+        const colorInfo = getClassColor(
+          _records.find((rec) => String(rec.id) === String(_newestId))?.class,
+        );
         entity.point.color = new Cesium.Color(
           colorInfo.r,
           colorInfo.g,
@@ -276,23 +357,22 @@ export function createSunnyAirDetectionsLayer({
     enable() {
       _enabled = true;
       if (_dataSource) _dataSource.show = true;
-      registerPickOwner(LAYER_ID, (id) => typeof id === 'string' && id.startsWith('sunny-air:'));
-
-      fetchAndUpdate();
-      if (_intervalId) clearInterval(_intervalId);
-      _intervalId = setInterval(fetchAndUpdate, pollIntervalMs);
+      registerPickOwner(
+        LAYER_ID,
+        (id) => typeof id === 'string' && id.startsWith('sunny-air:'),
+      );
+      overlayHost?.setVisible?.(LAYER_ID, true);
+      syncPulseHold();
     },
 
     disable() {
       _enabled = false;
-      if (_intervalId) {
-        clearInterval(_intervalId);
-        _intervalId = null;
-      }
       _request?.abort();
       _request = null;
       if (_dataSource) _dataSource.show = false;
       unregisterPickOwner(LAYER_ID);
+      overlayHost?.setVisible?.(LAYER_ID, false);
+      syncPulseHold();
       hideCard();
     },
 
@@ -302,6 +382,9 @@ export function createSunnyAirDetectionsLayer({
 
     destroy(viewer = _viewer) {
       this.disable();
+      releaseContinuousRender(LAYER_ID);
+      publishOverlay([]);
+      overlayHost?.clearSource?.(LAYER_ID);
       if (_postRenderRemove) {
         _postRenderRemove();
         _postRenderRemove = null;

@@ -1,5 +1,10 @@
-import { createSunnyAirDetectionsLayer } from '../../layers/sunnyAirDetections/index.js';
+import {
+  createSunnyAirDetectionsLayer,
+  createSunnyAirDetectionsSource,
+} from '../../layers/sunnyAirDetections/index.js';
+import { overlayHost } from './overlayHost.js';
 
-export function createApplicationSunnyAirDetections(options) {
-  return createSunnyAirDetectionsLayer(options);
+export function createApplicationSunnyAirDetections(options = {}) {
+  const source = options.source || createSunnyAirDetectionsSource(options);
+  return createSunnyAirDetectionsLayer({ ...options, source, overlayHost });
 }

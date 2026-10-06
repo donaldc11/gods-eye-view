@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getClassColor, normalizeDetectionFeature, findNewestDetection } from './model.js';
+import {
+  getClassColor,
+  normalizeDetectionFeature,
+  findNewestDetection,
+} from './model.js';
 import { createSunnyAirDetectionsSource } from './source.js';
 import { createSunnyAirDetectionsLayer } from './index.js';
 
@@ -142,9 +146,17 @@ test('SunnyAirDetections layer lifecycle, polling, and entity creation', async (
   };
 
   let seekTime = null;
+  const overlayEntries = [];
   const layer = createSunnyAirDetectionsLayer({
     source,
     pollIntervalMs: 10000,
+    overlayHost: {
+      setEntries(_id, entries) {
+        overlayEntries.splice(0, overlayEntries.length, ...entries);
+      },
+      setVisible() {},
+      clearSource() {},
+    },
     onVideoSeek(t) {
       seekTime = t;
     },
@@ -159,6 +171,10 @@ test('SunnyAirDetections layer lifecycle, polling, and entity creation', async (
   const stats = layer.getStats();
   assert.equal(stats.count, 1);
   assert.equal(stats.error, null);
+  assert.equal(overlayEntries.length, 1);
+  assert.equal(overlayEntries[0].title, 'FLAME');
+  assert.equal(overlayEntries[0].variant, 'label');
+  assert.equal(seekTime, null);
 
   layer.disable();
   layer.destroy();

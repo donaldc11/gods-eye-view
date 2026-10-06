@@ -29,7 +29,7 @@ import { createInfrastructureLayers } from '../data/infrastructure.js';
 import { localGeoJsonServices } from './localGeojsonServices.js';
 import { createBhoteKoshiEventLayer } from '../data/bhoteKoshiEvent.js';
 import { createBhoteKoshiLocatorLayer } from '../data/bhoteKoshiLocator.js';
-import { createSunnyAirDetections } from '../data/sunnyAirDetections.js';
+import { createApplicationSunnyAirDetections } from './layers/sunnyAirDetections.js';
 
 const SOURCE_METHODS = Object.freeze({
   flights: ['getSnapshot'],
@@ -193,7 +193,7 @@ export function createApplicationCatalog({
           source: 'NASA FIRMS · LIVE',
           feed: sources.firms,
         }),
-        createSunnyAirDetections({
+        createApplicationSunnyAirDetections({
           url: `${import.meta.env?.BASE_URL || '/'}detections.geojson`,
         }),
       ],
