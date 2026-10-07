@@ -29,6 +29,16 @@ test('panel presentation places Transit between Street Traffic and Bike Share in
     ],
   );
   assert.equal(order.filter(({ id }) => id === 'transit').length, 1);
+  assert.deepEqual(
+    order.filter(({ label }) => label === 'Events').map(({ id }) => id),
+    [
+      'rocket-launches',
+      'earthquakes',
+      'local-firms',
+      'fire-perimeters',
+      'sunny-air-detections',
+    ],
+  );
 });
 
 test('partial feed controls distinguish incomplete records from stale data and outages', async () => {

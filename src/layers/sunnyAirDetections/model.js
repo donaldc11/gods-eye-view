@@ -1,5 +1,7 @@
 export function getClassColor(className) {
-  const normalized = String(className || '').toLowerCase().trim();
+  const normalized = String(className || '')
+    .toLowerCase()
+    .trim();
   switch (normalized) {
     case 'flame':
       return { r: 1.0, g: 0.15, b: 0.15, css: '#ff2626' }; // flame red
@@ -23,25 +25,44 @@ function optionalNumber(value) {
 export function normalizeDetectionFeature(feature) {
   if (!feature || feature.type !== 'Feature') return null;
   const props = feature.properties || {};
-  const coords = feature.geometry?.type === 'Point' ? feature.geometry.coordinates : [];
+  const coords =
+    feature.geometry?.type === 'Point' ? feature.geometry.coordinates : [];
   const lon = optionalNumber(props.lon) ?? optionalNumber(coords?.[0]);
   const lat = optionalNumber(props.lat) ?? optionalNumber(coords?.[1]);
-  if (lon === null || lat === null || Math.abs(lon) > 180 || Math.abs(lat) > 90) return null;
+  if (lon === null || lat === null || Math.abs(lon) > 180 || Math.abs(lat) > 90)
+    return null;
   const tVideo = optionalNumber(props.t_video);
   // Derived identity is repeatable across snapshots; never invent random events.
-  const identity = [props.source, props.original_video, props.camera_id, tVideo, props.class, lon, lat];
+  const identity = [
+    props.source,
+    props.original_video,
+    props.camera_id,
+    tVideo,
+    props.class,
+    lon,
+    lat,
+  ];
   const id = String(props.id || `det:${JSON.stringify(identity)}`);
   const confidence = optionalNumber(props.confidence);
   const rawTimestamp = props.ts_utc;
-  const tsUtc = rawTimestamp && Number.isFinite(Date.parse(rawTimestamp)) ? String(rawTimestamp) : null;
+  const tsUtc =
+    rawTimestamp && Number.isFinite(Date.parse(rawTimestamp))
+      ? String(rawTimestamp)
+      : null;
   return {
     ...props,
     id,
-    class: String(props.class || 'unknown').toLowerCase().trim(),
-    confidence: confidence !== null && confidence >= 0 && confidence <= 1 ? confidence : null,
+    class: String(props.class || 'unknown')
+      .toLowerCase()
+      .trim(),
+    confidence:
+      confidence !== null && confidence >= 0 && confidence <= 1
+        ? confidence
+        : null,
     t_video: tVideo !== null && tVideo >= 0 ? tVideo : null,
     ts_utc: tsUtc,
-    lat, lon,
+    lat,
+    lon,
     alt_m: optionalNumber(props.alt_m) ?? 0,
     heading_deg: optionalNumber(props.heading_deg),
     source: String(props.source || 'Video archive'),

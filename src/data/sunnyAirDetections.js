@@ -1,4 +1,7 @@
-import { createSunnyAirDetectionsSource, createSunnyAirDetectionsLayer } from '../layers/sunnyAirDetections/index.js';
+import {
+  createSunnyAirDetectionsSource,
+  createSunnyAirDetectionsLayer,
+} from '../layers/sunnyAirDetections/index.js';
 export * from '../layers/sunnyAirDetections/index.js';
 
 export function createSunnyAirDetections(options = {}) {
